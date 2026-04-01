@@ -50,6 +50,9 @@
           libdrm
           libxkbcommon
           mesa
+          libglvnd        # provides libEGL.so.1, libGL.so.1
+          libepoxy        # EGL/GL helper library
+          egl-wayland     # Wayland EGL support
         ] ++ x11Libs;
 
         # Desktop item for the application
@@ -126,7 +129,12 @@
             runHook preBuild
             
             # Remove SidecarPlugin from forge.config.ts to avoid sidecar build
+            # (sidecar requires pkg which downloads binaries from the network)
             sed -i '/new sidecar.SidecarPlugin()/d' forge.config.ts
+            
+            # Add ETCHER_UTIL_BIN_PATH webpack define that SidecarPlugin would have set
+            # SidecarPlugin normally sets this to "etcher-util" (relative to resources path)
+            sed -i "s/plugins: \[injectAnalyticsToken\],/plugins: [injectAnalyticsToken, new DefinePlugin({ 'ETCHER_UTIL_BIN_PATH': JSON.stringify('etcher-util') })],/" webpack.config.ts
             
             # Create a directory with the pre-downloaded Electron zip
             # electron-packager's electronZipDir option bypasses @electron/get entirely
@@ -164,14 +172,26 @@
               # electron-packager creates a 'balenaEtcher' symlink that points to /build/ - remove it
               # since we have the actual 'balena-etcher' binary and our own wrapper
               rm -f $out/share/balena-etcher/balenaEtcher
+              
+              # Create stub etcher-util script (sidecar was removed to avoid network downloads)
+              # The main process resolves this relative to resources path
+              mkdir -p $out/share/balena-etcher/resources
+              cat > $out/share/balena-etcher/resources/etcher-util << 'STUB'
+#!/usr/bin/env node
+console.error("etcher-util sidecar is not available in this build.");
+process.exit(1);
+STUB
+              chmod +x $out/share/balena-etcher/resources/etcher-util
               echo "Removed broken balenaEtcher symlink"
               
               echo "Installed contents:"
               ls -la $out/share/balena-etcher/
               
-              # Create wrapper that sets XDG_DATA_DIRS for desktop integration
+              # Create wrapper that sets runtime environment for Electron/Chromium
+              # LD_LIBRARY_PATH is needed because Chromium dlopen's libEGL.so.1 at runtime
               mkdir -p $out/bin
               makeWrapper $out/share/balena-etcher/balena-etcher $out/bin/balena-etcher \
+                --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath (with pkgs; [ libglvnd libepoxy mesa ])} \
                 --set XDG_DATA_DIRS "$out/share:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}" \
                 --prefix GIO_EXTRA_MODULES : "${pkgs.dconf}/lib/gio/modules" \
                 --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.xdg-utils ]}"
