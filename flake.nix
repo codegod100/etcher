@@ -117,19 +117,16 @@
           
           buildPhase = ''
             runHook preBuild
-            echo "Running electron-forge package..."
+            echo "Building with electron-forge..."
             
-            # Tell electron-forge to use system electron
-            export ELECTRON_PATH=${pkgs.electron}/bin/electron
             export ELECTRON_SKIP_BINARY_DOWNLOAD=1
             
-            # Run electron-forge package (this will use webpack plugin internally)
-            ./node_modules/.bin/electron-forge package 2>&1 || true
+            # Run electron-forge package
+            node_modules/.bin/electron-forge package 2>&1
             
             echo ""
-            echo "Build attempted. Checking outputs..."
+            echo "Build complete. Checking outputs..."
             ls -la out/ 2>&1 || true
-            find . -name "*.asar" 2>&1 || true
             
             runHook postBuild
           '';
@@ -139,24 +136,34 @@
             
             echo "Installing to $out..."
             
-            # Create the electron app structure
-            mkdir -p $out/share/balena-etcher
+            # electron-forge creates out/balena-etcher-linux-x64/
+            OUT_DIR=$(ls -d out/*linux*/ 2>/dev/null | head -1)
+            echo "Found output directory: $OUT_DIR"
             
-            # Copy webpack output
-            cp -r .webpack/* $out/share/balena-etcher/ 2>/dev/null || true
-            
-            # Copy package resources
-            cp -r lib $out/share/balena-etcher/ 2>/dev/null || true
-            cp package.json $out/share/balena-etcher/ 2>/dev/null || true
-            
-            echo "Installed contents:"
-            find $out/share/balena-etcher -type f | head -20
-            
-            # Create wrapper script
-            mkdir -p $out/bin
-            makeWrapper ${pkgs.electron}/bin/electron $out/bin/balena-etcher \
-              --add-flags $out/share/balena-etcher \
-              --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath runtimeLibs}
+            if [ -d "$OUT_DIR" ]; then
+              # Copy the packaged app
+              mkdir -p $out/share/balena-etcher
+              cp -r $OUT_DIR/* $out/share/balena-etcher/
+              
+              echo "Installed contents:"
+              ls -la $out/share/balena-etcher/
+              
+              # Create wrapper - the packaged app has balena-etcher executable
+              mkdir -p $out/bin
+              if [ -f "$out/share/balena-etcher/balena-etcher" ]; then
+                makeWrapper $out/share/balena-etcher/balena-etcher $out/bin/balena-etcher \
+                  --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath runtimeLibs}
+              else
+                # Fallback to electron direct
+                makeWrapper ${pkgs.electron}/bin/electron $out/bin/balena-etcher \
+                  --add-flags $out/share/balena-etcher/resources/app.asar \
+                  --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath runtimeLibs}
+              fi
+            else
+              echo "ERROR: No output directory found in out/"
+              ls -la out/ 2>&1 || true
+              exit 1
+            fi
             
             echo "Wrapper created at $out/bin/balena-etcher"
             
