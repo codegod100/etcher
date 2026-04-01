@@ -120,49 +120,24 @@
           
           buildPhase = ''
             runHook preBuild
-            echo "Building with electron-forge..."
-            
-            # Set ELECTRON_PATH to the system electron
-            export ELECTRON_PATH=${pkgs.electron}/bin/electron
             
             # Remove SidecarPlugin from forge.config.ts to avoid sidecar build
-            echo "Removing SidecarPlugin from forge.config.ts..."
             sed -i '/new sidecar.SidecarPlugin()/d' forge.config.ts
             
-            # Configure electron-packager to use system electron via forge config
-            echo "Patching forge.config.ts to use system Electron..."
-            sed -i 's/asar: true,/asar: true,\n\t\telectronPath: process.env.ELECTRON_PATH,/' forge.config.ts
-            
-            # Set up Electron cache in multiple locations
-            export ELECTRON_CACHE=$HOME/.cache/electron
-            mkdir -p $ELECTRON_CACHE
-            
-            # Copy the pre-downloaded Electron zip to the cache
+            # Create a directory with the pre-downloaded Electron zip
+            # electron-packager's electronZipDir option bypasses @electron/get entirely
+            ELECTRON_ZIP_DIR=$TMPDIR/electron-zip
+            mkdir -p $ELECTRON_ZIP_DIR
             cp ${pkgs.fetchurl {
               url = "https://github.com/electron/electron/releases/download/v37.2.4/electron-v37.2.4-linux-x64.zip";
               sha256 = "1nq1nvrg860wrmyzx810lk3i42f1znrym3qmz78hby7fynx6wz82";
-            }} $ELECTRON_CACHE/electron-v37.2.4-linux-x64.zip
+            }} $ELECTRON_ZIP_DIR/electron-v37.2.4-linux-x64.zip
             
-            # Create the SHASUMS256.txt that electron-download expects
-            cd $ELECTRON_CACHE && sha256sum electron-v37.2.4-linux-x64.zip > SHASUMS256.txt && cd -
-            
-            # Also set XDG_CACHE_HOME for @electron/get
-            export XDG_CACHE_HOME=$HOME/.cache
-            
-            # Prevent any network downloads
-            export ELECTRON_SKIP_BINARY_DOWNLOAD=1
-            
-            echo "Electron cache contents:"
-            ls -la $ELECTRON_CACHE/
-            echo "ELECTRON_PATH: $ELECTRON_PATH"
+            # Patch forge.config.ts to use electronZipDir
+            sed -i "s|asar: true,|asar: true,\n\t\telectronZipDir: '$ELECTRON_ZIP_DIR',|" forge.config.ts
             
             # Run electron-forge package
-            echo "Running electron-forge package..."
             node_modules/.bin/electron-forge package 2>&1
-            
-            echo ""
-            echo "Build complete. Checking outputs..."
-            ls -la out/ 2>&1 || true
             
             runHook postBuild
           '';
@@ -180,6 +155,12 @@
               # Copy the packaged app
               mkdir -p $out/share/balena-etcher
               cp -r $OUT_DIR/* $out/share/balena-etcher/
+              
+              # Fix broken symlinks that point to /build/ paths
+              # electron-packager creates a 'balenaEtcher' symlink that points to /build/ - remove it
+              # since we have the actual 'balena-etcher' binary and our own wrapper
+              rm -f $out/share/balena-etcher/balenaEtcher
+              echo "Removed broken balenaEtcher symlink"
               
               echo "Installed contents:"
               ls -la $out/share/balena-etcher/
