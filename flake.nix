@@ -104,9 +104,13 @@
             pkg-config
             makeWrapper
             copyDesktopItems
+            autoPatchelfHook
           ];
           
-          buildInputs = runtimeLibs;
+          buildInputs = with pkgs; [
+            stdenv.cc.cc.lib  # glibc - needed by autoPatchelfHook for the dynamic linker
+            zlib
+          ] ++ runtimeLibs;
           
           desktopItems = [ desktopItem ];
           
@@ -165,17 +169,12 @@
               echo "Installed contents:"
               ls -la $out/share/balena-etcher/
               
-              # Create wrapper - the packaged app has balena-etcher executable
+              # Create wrapper that sets XDG_DATA_DIRS for desktop integration
               mkdir -p $out/bin
-              if [ -f "$out/share/balena-etcher/balena-etcher" ]; then
-                makeWrapper $out/share/balena-etcher/balena-etcher $out/bin/balena-etcher \
-                  --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath runtimeLibs}
-              else
-                # Fallback to electron direct
-                makeWrapper ${pkgs.electron}/bin/electron $out/bin/balena-etcher \
-                  --add-flags $out/share/balena-etcher/resources/app.asar \
-                  --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath runtimeLibs}
-              fi
+              makeWrapper $out/share/balena-etcher/balena-etcher $out/bin/balena-etcher \
+                --set XDG_DATA_DIRS "$out/share:${pkgs.gsettings-desktop-schemas}/share/gsettings-schemas/${pkgs.gsettings-desktop-schemas.name}:${pkgs.gtk3}/share/gsettings-schemas/${pkgs.gtk3.name}" \
+                --prefix GIO_EXTRA_MODULES : "${pkgs.dconf}/lib/gio/modules" \
+                --prefix PATH : "${pkgs.lib.makeBinPath [ pkgs.xdg-utils ]}"
             else
               echo "ERROR: No output directory found in out/"
               ls -la out/ 2>&1 || true
