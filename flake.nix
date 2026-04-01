@@ -96,6 +96,9 @@
           
           makeCacheWritable = true;
           
+          # Ensure devDependencies are installed (needed for electron-forge)
+          npmInstallFlags = [ "--include=dev" ];
+          
           nativeBuildInputs = with pkgs; [
             python3
             pkg-config
@@ -119,28 +122,43 @@
             runHook preBuild
             echo "Building with electron-forge..."
             
+            # Set ELECTRON_PATH to the system electron
+            export ELECTRON_PATH=${pkgs.electron}/bin/electron
+            
+            # Remove SidecarPlugin from forge.config.ts to avoid sidecar build
+            echo "Removing SidecarPlugin from forge.config.ts..."
+            sed -i '/new sidecar.SidecarPlugin()/d' forge.config.ts
+            
+            # Configure electron-packager to use system electron via forge config
+            echo "Patching forge.config.ts to use system Electron..."
+            sed -i 's/asar: true,/asar: true,\n\t\telectronPath: process.env.ELECTRON_PATH,/' forge.config.ts
+            
+            # Set up Electron cache in multiple locations
+            export ELECTRON_CACHE=$HOME/.cache/electron
+            mkdir -p $ELECTRON_CACHE
+            
+            # Copy the pre-downloaded Electron zip to the cache
+            cp ${pkgs.fetchurl {
+              url = "https://github.com/electron/electron/releases/download/v37.2.4/electron-v37.2.4-linux-x64.zip";
+              sha256 = "1nq1nvrg860wrmyzx810lk3i42f1znrym3qmz78hby7fynx6wz82";
+            }} $ELECTRON_CACHE/electron-v37.2.4-linux-x64.zip
+            
+            # Create the SHASUMS256.txt that electron-download expects
+            cd $ELECTRON_CACHE && sha256sum electron-v37.2.4-linux-x64.zip > SHASUMS256.txt && cd -
+            
+            # Also set XDG_CACHE_HOME for @electron/get
+            export XDG_CACHE_HOME=$HOME/.cache
+            
+            # Prevent any network downloads
             export ELECTRON_SKIP_BINARY_DOWNLOAD=1
             
-            # Debug: check node_modules structure
-            echo "Node modules structure:"
-            ls -la node_modules/ | head -20
-            echo ""
-            echo "Looking for electron-forge..."
-            find node_modules -name "electron-forge.js" -o -name "electron-forge" 2>/dev/null | head -10
-            echo ""
-            echo "Checking .bin directory:"
-            ls -la node_modules/.bin/ 2>/dev/null | head -10 || echo "No .bin directory"
+            echo "Electron cache contents:"
+            ls -la $ELECTRON_CACHE/
+            echo "ELECTRON_PATH: $ELECTRON_PATH"
             
-            # Try running via npx with offline mode
-            echo ""
-            echo "Trying npx electron-forge..."
-            npx --offline electron-forge package 2>&1 || {
-              echo "npx failed, trying direct node..."
-              node -e "require('@electron-forge/cli').default package()" 2>&1 || {
-                echo "All methods failed, exiting"
-                exit 1
-              }
-            }
+            # Run electron-forge package
+            echo "Running electron-forge package..."
+            node_modules/.bin/electron-forge package 2>&1
             
             echo ""
             echo "Build complete. Checking outputs..."
