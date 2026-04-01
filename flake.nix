@@ -121,8 +121,21 @@
             
             export ELECTRON_SKIP_BINARY_DOWNLOAD=1
             
-            # Run electron-forge package
-            node_modules/.bin/electron-forge package 2>&1
+            # Find electron-forge binary
+            echo "Looking for electron-forge..."
+            find node_modules -name "electron-forge.js" 2>/dev/null | head -5
+            ls -la node_modules/.bin/ 2>/dev/null | grep forge | head -5 || echo "No .bin/forge found"
+            
+            # Try different ways to run electron-forge
+            if [ -f "node_modules/.bin/electron-forge" ]; then
+              node_modules/.bin/electron-forge package 2>&1
+            elif [ -f "node_modules/@electron-forge/cli/dist/electron-forge.js" ]; then
+              node node_modules/@electron-forge/cli/dist/electron-forge.js package 2>&1
+            else
+              echo "ERROR: electron-forge not found"
+              find node_modules -name "*forge*" -type f 2>/dev/null | head -10
+              exit 1
+            fi
             
             echo ""
             echo "Build complete. Checking outputs..."
